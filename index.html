@@ -485,9 +485,20 @@ function processData(patientRows, sessionRows) {
     const extMonthsRaw = parseInt(r["Extention Months"], 10);
     const extMonths = isNaN(extMonthsRaw) ? 0 : extMonthsRaw;
 
-    let endDate = null;
+    // Fallback expiry: assigned date + duration + extension (the original formula).
+    let computedEnd = null;
     if (startDate && durationMonths !== null) {
-      endDate = addMonthsUTC(startDate, durationMonths + extMonths);
+      computedEnd = addMonthsUTC(startDate, durationMonths + extMonths);
+    }
+
+    // Sheet's "Expiry" column (I) wins when present and not before the assigned
+    // date; otherwise fall back to the computed formula above.
+    const sheetExpiry = parsePatientDate(r["Expiry"]);
+    let endDate = computedEnd;
+    let expirySource = "computed";
+    if (startDate && sheetExpiry && sheetExpiry.getTime() >= startDate.getTime()) {
+      endDate = sheetExpiry;
+      expirySource = "sheet";
     }
 
     return {
@@ -500,6 +511,7 @@ function processData(patientRows, sessionRows) {
       durationLabel: durationMonths !== null ? `${durationMonths} month${durationMonths === 1 ? "" : "s"}${extMonths ? " + " + extMonths + " ext." : ""}` : "—",
       startDate,
       endDate,
+      expirySource,
       _sortStart: startDate ? startDate.getTime() : Infinity,
     };
   }).filter(Boolean);
@@ -909,7 +921,7 @@ function render() {
       <td>${escapeHtml(r.planNameDisplay) || "<span class='muted'>—</span>"}</td>
       <td>${r.durationLabel}</td>
       <td>${fmtDate(r.startDate) || "<span class='muted'>—</span>"}</td>
-      <td class="${expiryClass}">${fmtDate(r.endDate) || "<span class='muted'>—</span>"}</td>
+      <td class="${expiryClass}" title="${r.endDate ? (r.expirySource === "sheet" ? "From sheet's Expiry column" : "Calculated: assigned date + duration + extension") : ""}">${fmtDate(r.endDate) || "<span class='muted'>—</span>"}</td>
       <td>${coachCell}</td>
       <td>${roleCell}</td>
       <td>${sessionsCell}</td>
