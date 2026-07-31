@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Coach Engagement & Plan Expiry Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    --navy: #0f2542;
+    --navy-light: #1c3d66;
+    --accent: #2563eb;
+    --accent-light: #dbeafe;
+    --green: #16a34a;
+    --green-light: #dcfce7;
+    --amber: #d97706;
+    --amber-light: #fef3c7;
+    --red: #dc2626;
+    --red-light: #fee2e2;
+    --gray-50: #f8fafc;
+    --gray-100: #f1f5f9;
+    --gray-200: #e2e8f0;
+    --gray-400: #94a3b8;
+    --gray-600: #475569;
+    --gray-800: #1e293b;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--gray-50);
+    color: var(--gray-800);
+  }
+  header {
+    background: var(--navy);
+    color: white;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 19px;
+    margin: 0;
+    font-weight: 600;
+  }
+  header .sub {
+    font-size: 12px;
+    color: #b9c8dd;
+    margin-top: 2px;
+  }
+  header .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 7px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: opacity .15s ease;
+  }
+  button:hover { opacity: .88; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-ghost { background: rgba(255,255,255,0.12); color: white; }
+  .btn-export { background: var(--green); color: white; }
+
+  #status-bar {
+    padding: 10px 28px;
+    font-size: 13px;
+    background: var(--accent-light);
+    color: var(--navy);
+    display: none;
+  }
+  #status-bar.show { display: block; }
+  #status-bar.error { background: var(--red-light); color: var(--red); }
+
+  #upload-panel {
+    display: none;
+    padding: 18px 28px;
+    background: var(--amber-light);
+    border-bottom: 1px solid var(--gray-200);
+  }
+  #upload-panel.show { display: block; }
+  #upload-panel p { margin: 0 0 10px; font-size: 13px; color: var(--gray-800); }
+  #upload-panel .rows { display: flex; gap: 24px; flex-wrap: wrap; }
+  #upload-panel label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--gray-600); }
+
+  main { padding: 20px 28px 60px; }
+
+  .summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .num { font-size: 24px; font-weight: 700; color: var(--navy); }
+  .card .label { font-size: 12px; color: var(--gray-600); margin-top: 2px; }
+
+  .filter-bar {
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 18px;
+  }
+  .filter-group { display: flex; flex-direction: column; gap: 5px; min-width: 190px; }
+  .filter-group label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray-600); }
+  select, input[type="text"], input[type="file"] {
+    font: inherit;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    font-size: 13px;
+    background: white;
+    color: var(--gray-800);
+  }
+  select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .filter-group.grow { flex: 1; min-width: 220px; }
+  .clear-link {
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: underline;
+    background: none;
+    border: none;
+    padding: 8px 4px;
+    font-weight: 600;
+  }
+
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; border: 1px solid var(--gray-200); }
+  thead th {
+    background: var(--navy);
+    color: white;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+  }
+  thead th:hover { background: var(--navy-light); }
+  tbody td {
+    padding: 10px 12px;
+    font-size: 13px;
+    border-top: 1px solid var(--gray-100);
+    vertical-align: top;
+  }
+  tbody tr:hover { background: var(--gray-50); }
+  .table-wrap { overflow-x: auto; max-height: 70vh; overflow-y: auto; border-radius: 10px; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .pill.booked { background: var(--amber-light); color: var(--amber); }
+  .pill.blank { background: var(--gray-100); color: var(--gray-400); }
+  .muted { color: var(--gray-400); font-style: italic; }
+  .expiry-soon { color: var(--red); font-weight: 700; }
+  .no-results { text-align: center; padding: 50px 20px; color: var(--gray-400); font-size: 14px; }
+  footer { text-align: center; padding: 24px; font-size: 12px; color: var(--gray-400); }
+  a.link { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Coach Engagement &amp; Plan Expiry Dashboard</h1>
+    <div class="sub" id="last-updated">Not loaded yet</div>
+  </div>
+  <div class="actions">
+    <button class="btn-ghost" id="btn-source">Data source settings</button>
+    <button class="btn-primary" id="btn-refresh">Refresh data</button>
+    <button class="btn-export" id="btn-export">Export CSV</button>
+  </div>
+</header>
+
+<div id="status-bar"></div>
+
+<div id="upload-panel">
+  <p><strong>Live fetch didn't work</strong> (this can happen depending on network/browser). Export both Google Sheet tabs as CSV (File → Download → Comma Separated Values) and upload them here instead. Everything else works the same.</p>
+  <div class="rows">
+    <div>
+      <label>Patient data CSV</label>
+      <input type="file" id="file-patient" accept=".csv" />
+    </div>
+    <div>
+      <label>Session data CSV</label>
+      <input type="file" id="file-session" accept=".csv" />
+    </div>
+    <div style="align-self:flex-end;">
+      <button class="btn-primary" id="btn-process-upload">Process uploaded files</button>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="summary-cards" id="summary-cards"></div>
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>Expiry month</label>
+      <select id="filter-month"></select>
+    </div>
+    <div class="filter-group">
+      <label>Coach</label>
+      <select id="filter-coach"></select>
+    </div>
+    <div class="filter-group">
+      <label>Plan</label>
+      <select id="filter-plan"></select>
+    </div>
+    <div class="filter-group grow">
+      <label>Search (name or phone)</label>
+      <input type="text" id="filter-search" placeholder="Type to filter…" />
+    </div>
+    <button class="clear-link" id="btn-clear-filters">Clear all filters</button>
+  </div>
+
+  <div class="table-wrap">
+    <table id="results-table">
+      <thead>
+        <tr>
+          <th data-key="name">Patient Name</th>
+          <th data-key="phone">Phone</th>
+          <th data-key="condition">Condition</th>
+          <th data-key="planNameDisplay">Plan</th>
+          <th data-key="durationLabel">Duration</th>
+          <th data-key="startDate">Start Date</th>
+          <th data-key="endDate">Expiry Date</th>
+          <th data-key="coachDisplay">Coach</th>
+          <th data-key="roleDisplay">Coach Type</th>
+          <th data-key="sessionsCompleted">Sessions Completed</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+</main>
+
+<footer>
+  Data refreshes from the connected Google Sheet each time you open this page or click Refresh. Renewals for the same phone number are tracked as separate plan periods — engagement is calculated only within each period's own date range.
+</footer>
+
+<script>
+/* ============================== CONFIG ============================== */
+const DEFAULT_PATIENT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQscA-Y05gGsr6xx54awNYgJJnCLoirIf5IKsNHRmLFYyBqtUL1khVmy3cP_L3U0pG1G6vMPPOqiNNO/pub?gid=433476969&single=true&output=csv";
+const DEFAULT_SESSION_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQscA-Y05gGsr6xx54awNYgJJnCLoirIf5IKsNHRmLFYyBqtUL1khVmy3cP_L3U0pG1G6vMPPOqiNNO/pub?gid=476749675&single=true&output=csv";
+
+function getSourceUrls() {
+  return {
+    patient: localStorage.getItem("patientCsvUrl") || DEFAULT_PATIENT_CSV_URL,
+    session: localStorage.getItem("sessionCsvUrl") || DEFAULT_SESSION_CSV_URL,
+  };
+}
+
+/* ============================== STATE ============================== */
+let ENROLLMENTS = [];      // processed rows, one per patient plan-period
+let sortState = { key: "endDate", dir: "asc" };
+
+/* ============================== HELPERS: DATES ============================== */
+// Patient sheet dates: "MM-DD-YYYY" or "M/D/YYYY" (month-first, US style)
+function parsePatientDate(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s || s.toLowerCase() === "nan") return null;
+  const sep = s.includes("-") ? "-" : (s.includes("/") ? "/" : null);
+  if (!sep) return null;
+  const parts = s.split(sep);
+  if (parts.length !== 3) return null;
+  const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
+  if (!m || !d || !y || m > 12 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (isNaN(dt.getTime())) return null;
+  // Guard against impossible dates (e.g. "31" in a 30-day month) silently rolling
+  // into the next month instead of being treated as invalid.
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return dt;
+}
+
+// Session sheet created_at is inconsistent:
+//   - "M/D/YYYY"            -> month-first, no time
+//   - "D/M/YYYY HH:MM"      -> day-first, has time
+//   - "YYYY-MM-DD"          -> ISO
+function parseSessionDate(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s || s.toLowerCase() === "nan") return null;
+
+  const build = (y, m, d) => {
+    if (!m || !d || !y || m > 12 || d > 31) return null;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (isNaN(dt.getTime())) return null;
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+    return dt;
+  };
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const [y, m, d] = s.split(/[- T]/)[0].split("-").map(Number);
+    return build(y, m, d);
+  }
+  if (s.includes(" ")) {
+    // has time component -> day-first
+    const datePart = s.split(" ")[0];
+    const parts = datePart.split("/");
+    if (parts.length !== 3) return null;
+    const d = parseInt(parts[0], 10), m = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
+    return build(y, m, d);
+  }
+  if (s.includes("/")) {
+    // no time -> month-first
+    const parts = s.split("/");
+    if (parts.length !== 3) return null;
+    const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
+    return build(y, m, d);
+  }
+  return null;
+}
+
+function addMonthsUTC(date, months) {
+  const y = date.getUTCFullYear();
+  const m = date.getUTCMonth();
+  const d = date.getUTCDate();
+  const totalMonthIndex = m + months;
+  const targetYear = y + Math.floor(totalMonthIndex / 12);
+  const targetMonth = ((totalMonthIndex % 12) + 12) % 12;
+  // Clamp to the last valid day of the target month (mirrors dateutil.relativedelta
+  // behaviour) so e.g. 31 Jan + 1 month = 28/29 Feb, not an overflow into March.
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(d, daysInTargetMonth);
+  return new Date(Date.UTC(targetYear, targetMonth, clampedDay));
+}
+
+function fmtDate(d) {
+  if (!d) return "";
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function monthKey(d) {
+  if (!d) return null;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(key) {
+  if (key === "UNSPEC") return "Unspecified / missing duration";
+  const [y, m] = key.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, 1));
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+/* ============================== HELPERS: TEXT ============================== */
+function cleanPhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  return digits.slice(-10);
+}
+
+function parseDurationMonths(raw) {
+  const s = String(raw || "").trim();
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return null;
+}
+
+function normalizePlanName(raw, durationMonths) {
+  if (durationMonths === 1) return "Smart CGM plan";
+  let s = String(raw || "").trim();
+  if (!s) return "Unspecified";
+  s = s.replace(/\s+/g, " ");
+  s = s.replace(/(\d)(month)/i, "$1 $2");
+  s = s.replace(/\bmonths?\b/gi, "Months"); // merge "6 months" / "6 Months" casing variants
+  if (s.toUpperCase().includes("MAMILY")) return null; // excluded elsewhere too
+  return s;
+}
+
+/* ============================== CORE PROCESSING ============================== */
+function processData(patientRows, sessionRows) {
+  // ---- Build session records ----
+  const sessions = sessionRows.map((r, i) => {
+    const coach = `${(r.first_name || "").trim()} ${(r.last_name || "").trim()}`.trim();
+    return {
+      idx: i,
+      phone: cleanPhone(r.contact_no),
+      coach: coach || "(Unnamed coach)",
+      role: (r.role || "").trim(),
+      status: (r.status || "").trim(),
+      date: parseSessionDate(r.created_at),
+    };
+  }).filter(s => s.phone && s.date);
+
+  // index sessions by phone for speed
+  const sessionsByPhone = new Map();
+  sessions.forEach(s => {
+    if (!sessionsByPhone.has(s.phone)) sessionsByPhone.set(s.phone, []);
+    sessionsByPhone.get(s.phone).push(s);
+  });
+
+  // ---- Build patient enrollment records ----
+  let enrollments = patientRows.map(r => {
+    const planNameRaw = (r["Plan Name"] || "").trim();
+    if (planNameRaw.toUpperCase().includes("MAMILY")) return null; // exclude MAMILY entirely
+
+    const startDate = parsePatientDate(r["plan assigned completed date"]);
+    const durationMonths = parseDurationMonths(r["Plan Duration"]);
+    const extMonthsRaw = parseInt(r["Extention Months"], 10);
+    const extMonths = isNaN(extMonthsRaw) ? 0 : extMonthsRaw;
+
+    let endDate = null;
+    if (startDate && durationMonths !== null) {
+      endDate = addMonthsUTC(startDate, durationMonths + extMonths);
+    }
+
+    return {
+      name: (r["Patinet Name"] || "").trim(),
+      phone: (r["Phone number"] || "").trim(),
+      phoneClean: cleanPhone(r["Phone number"]),
+      condition: (r["Condition"] || "").trim(),
+      planNameDisplay: normalizePlanName(planNameRaw, durationMonths),
+      durationMonths,
+      durationLabel: durationMonths !== null ? `${durationMonths} month${durationMonths === 1 ? "" : "s"}${extMonths ? " + " + extMonths + " ext." : ""}` : "—",
+      startDate,
+      endDate,
+      _sortStart: startDate ? startDate.getTime() : Infinity,
+    };
+  }).filter(Boolean);
+
+  // ---- Group by phone, sort chronologically, assign non-overlapping session windows ----
+  const byPhone = new Map();
+  enrollments.forEach(e => {
+    if (!byPhone.has(e.phoneClean)) byPhone.set(e.phoneClean, []);
+    byPhone.get(e.phoneClean).push(e);
+  });
+
+  byPhone.forEach((rows, phone) => {
+    rows.sort((a, b) => a._sortStart - b._sortStart);
+    const candidateSessions = sessionsByPhone.get(phone) || [];
+    const used = new Set();
+
+    rows.forEach(row => {
+      if (!row.startDate || !row.endDate) {
+        row.coachDisplay = "";
+        row.roleDisplay = "";
+        row.sessionsCompleted = "";
+        row.fallback = false;
+        row.expiryMonthKey = "UNSPEC";
+        return;
+      }
+      row.expiryMonthKey = monthKey(row.endDate);
+
+      const startMs = row.startDate.getTime();
+      const endMs = row.endDate.getTime();
+      const windowSessions = candidateSessions.filter(s => {
+        if (used.has(s.idx)) return false;
+        const t = s.date.getTime();
+        return t >= startMs && t <= endMs;
+      });
+      windowSessions.forEach(s => used.add(s.idx));
+
+      const completed = windowSessions.filter(s => s.status === "F");
+      if (completed.length > 0) {
+        const counts = new Map();
+        completed.forEach(s => counts.set(s.coach, (counts.get(s.coach) || 0) + 1));
+        const max = Math.max(...counts.values());
+        const topCoaches = [...counts.entries()].filter(([, c]) => c === max).map(([c]) => c);
+        const rolesUsed = new Set(completed.filter(s => topCoaches.includes(s.coach)).map(s => s.role));
+        row.coachDisplay = topCoaches.join(", ");
+        row.roleDisplay = [...rolesUsed].join(", ");
+        row.sessionsCompleted = max;
+        row.fallback = false;
+      } else {
+        const nutriRows = windowSessions.filter(s => s.role === "Nutritionist");
+        if (nutriRows.length > 0) {
+          const counts = new Map();
+          nutriRows.forEach(s => counts.set(s.coach, (counts.get(s.coach) || 0) + 1));
+          const max = Math.max(...counts.values());
+          const topCoaches = [...counts.entries()].filter(([, c]) => c === max).map(([c]) => c);
+          row.coachDisplay = topCoaches.join(", ");
+          row.roleDisplay = "Nutritionist";
+          row.sessionsCompleted = 0;
+          row.fallback = true;
+        } else {
+          row.coachDisplay = "";
+          row.roleDisplay = "";
+          row.sessionsCompleted = 0;
+          row.fallback = false;
+        }
+      }
+    });
+  });
+
+  return enrollments;
+}
+
+/* ============================== LOADING ============================== */
+function setStatus(msg, isError) {
+  const bar = document.getElementById("status-bar");
+  bar.textContent = msg;
+  bar.classList.add("show");
+  bar.classList.toggle("error", !!isError);
+}
+function hideStatus() {
+  document.getElementById("status-bar").classList.remove("show");
+}
+
+function parseCsvText(text) {
+  const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+  return result.data;
+}
+
+async function fetchCsv(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  if (!text || text.trim().length === 0 || text.trim().startsWith("<")) {
+    throw new Error("Empty or non-CSV response");
+  }
+  return parseCsvText(text);
+}
+
+async function loadFromLive() {
+  setStatus("Loading live data from Google Sheets…");
+  const { patient, session } = getSourceUrls();
+  try {
+    const [patientRows, sessionRows] = await Promise.all([fetchCsv(patient), fetchCsv(session)]);
+    ENROLLMENTS = processData(patientRows, sessionRows);
+    document.getElementById("upload-panel").classList.remove("show");
+    onDataReady();
+  } catch (err) {
+    console.error(err);
+    setStatus("Couldn't fetch the sheets live (network/CORS). Upload CSV exports below instead.", true);
+    document.getElementById("upload-panel").classList.add("show");
+  }
+}
+
+function onDataReady() {
+  const now = new Date();
+  document.getElementById("last-updated").textContent = "Last loaded: " + now.toLocaleString();
+  hideStatus();
+  populateFilters(true);
+  render();
+}
+
+/* ============================== FILTERS ============================== */
+function getFilterValues() {
+  return {
+    month: document.getElementById("filter-month").value,
+    coach: document.getElementById("filter-coach").value,
+    plan: document.getElementById("filter-plan").value,
+    search: document.getElementById("filter-search").value.trim().toLowerCase(),
+  };
+}
+
+function matchesUpTo(row, stage, f) {
+  // stage: 'month' | 'coach' | 'plan' — used to build cascading options
+  if (f.month && f.month !== "ALL" && row.expiryMonthKey !== f.month) return false;
+  if (stage === "month") return true;
+  if (f.coach && f.coach !== "ALL") {
+    const coaches = (row.coachDisplay || "").split(",").map(c => c.trim());
+    if (!coaches.includes(f.coach)) return false;
+  }
+  if (stage === "coach") return true;
+  if (f.plan && f.plan !== "ALL" && row.planNameDisplay !== f.plan) return false;
+  return true;
+}
+
+function passesAllFilters(row, f) {
+  if (!matchesUpTo(row, "plan", f)) return false;
+  if (f.search) {
+    const hay = `${row.name} ${row.phone}`.toLowerCase();
+    if (!hay.includes(f.search)) return false;
+  }
+  return true;
+}
+
+function populateFilters(resetToDefault) {
+  const f = getFilterValues();
+
+  // Month options: from all data, chronological, current month first select
+  const monthKeys = new Set(ENROLLMENTS.map(r => r.expiryMonthKey).filter(Boolean));
+  const sortedMonths = [...monthKeys].filter(k => k !== "UNSPEC").sort();
+  if (monthKeys.has("UNSPEC")) sortedMonths.push("UNSPEC");
+
+  const nowKey = monthKey(new Date());
+  const nextKey = monthKey(addMonthsUTC(new Date(), 1));
+
+  const monthSel = document.getElementById("filter-month");
+  const prevMonthVal = monthSel.value;
+  monthSel.innerHTML = `<option value="ALL">All months</option>` + sortedMonths.map(k => {
+    let label = monthLabel(k);
+    if (k === nowKey) label += " (current)";
+    if (k === nextKey) label += " (next)";
+    return `<option value="${k}">${label}</option>`;
+  }).join("");
+  if (resetToDefault) {
+    monthSel.value = monthKeys.has(nowKey) ? nowKey : "ALL";
+  } else if ([...monthSel.options].some(o => o.value === prevMonthVal)) {
+    monthSel.value = prevMonthVal;
+  }
+
+  const f2 = getFilterValues();
+  // Coach options: cascaded on month
+  const coachSet = new Set();
+  ENROLLMENTS.forEach(r => {
+    if (!matchesUpTo(r, "month", f2)) return;
+    (r.coachDisplay || "").split(",").map(c => c.trim()).filter(Boolean).forEach(c => coachSet.add(c));
+  });
+  const coachSel = document.getElementById("filter-coach");
+  const prevCoachVal = coachSel.value;
+  coachSel.innerHTML = `<option value="ALL">All coaches</option>` + [...coachSet].sort().map(c => `<option value="${c}">${c}</option>`).join("");
+  coachSel.value = [...coachSel.options].some(o => o.value === prevCoachVal) ? prevCoachVal : "ALL";
+
+  const f3 = getFilterValues();
+  // Plan options: cascaded on month + coach
+  const planSet = new Set();
+  ENROLLMENTS.forEach(r => {
+    if (!matchesUpTo(r, "coach", f3)) return;
+    if (r.planNameDisplay) planSet.add(r.planNameDisplay);
+  });
+  const planSel = document.getElementById("filter-plan");
+  const prevPlanVal = planSel.value;
+  planSel.innerHTML = `<option value="ALL">All plans</option>` + [...planSet].sort().map(p => `<option value="${p}">${p}</option>`).join("");
+  planSel.value = [...planSel.options].some(o => o.value === prevPlanVal) ? prevPlanVal : "ALL";
+}
+
+/* ============================== RENDER ============================== */
+function daysUntil(date) {
+  if (!date) return null;
+  const ms = date.getTime() - Date.now();
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
+function render() {
+  const f = getFilterValues();
+  let rows = ENROLLMENTS.filter(r => passesAllFilters(r, f));
+
+  // sort
+  rows.sort((a, b) => {
+    let av = a[sortState.key], bv = b[sortState.key];
+    if (av instanceof Date || bv instanceof Date) {
+      av = av ? av.getTime() : -Infinity;
+      bv = bv ? bv.getTime() : -Infinity;
+    } else {
+      av = (av === undefined || av === null) ? "" : av;
+      bv = (bv === undefined || bv === null) ? "" : bv;
+      if (typeof av === "string") av = av.toLowerCase();
+      if (typeof bv === "string") bv = bv.toLowerCase();
+    }
+    if (av < bv) return sortState.dir === "asc" ? -1 : 1;
+    if (av > bv) return sortState.dir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  // summary cards
+  const totalPatients = rows.length;
+  const withCoach = rows.filter(r => r.coachDisplay).length;
+  const bookedNotCompleted = rows.filter(r => r.fallback).length;
+  const noEngagement = rows.filter(r => !r.coachDisplay && r.endDate).length;
+  document.getElementById("summary-cards").innerHTML = `
+    <div class="card"><div class="num">${totalPatients}</div><div class="label">Patients in view</div></div>
+    <div class="card"><div class="num">${withCoach}</div><div class="label">With a coach identified</div></div>
+    <div class="card"><div class="num">${bookedNotCompleted}</div><div class="label">Booked, not yet completed</div></div>
+    <div class="card"><div class="num">${noEngagement}</div><div class="label">No engagement found</div></div>
+  `;
+
+  const tbody = document.getElementById("results-body");
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10"><div class="no-results">No patients match the current filters.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const du = daysUntil(r.endDate);
+    const expiryClass = (du !== null && du <= 7 && du >= 0) ? "expiry-soon" : "";
+    const coachCell = r.coachDisplay
+      ? `${r.coachDisplay}${r.fallback ? ' <span class="pill booked">booked, not completed</span>' : ""}`
+      : `<span class="muted">—</span>`;
+    const roleCell = r.roleDisplay || `<span class="muted">—</span>`;
+    const sessionsCell = (r.sessionsCompleted === "" || r.sessionsCompleted === undefined) ? `<span class="muted">—</span>` : r.sessionsCompleted;
+    return `<tr>
+      <td>${escapeHtml(r.name) || "<span class='muted'>—</span>"}</td>
+      <td>${escapeHtml(r.phone) || "<span class='muted'>—</span>"}</td>
+      <td>${escapeHtml(r.condition) || "<span class='muted'>—</span>"}</td>
+      <td>${escapeHtml(r.planNameDisplay) || "<span class='muted'>—</span>"}</td>
+      <td>${r.durationLabel}</td>
+      <td>${fmtDate(r.startDate) || "<span class='muted'>—</span>"}</td>
+      <td class="${expiryClass}">${fmtDate(r.endDate) || "<span class='muted'>—</span>"}</td>
+      <td>${coachCell}</td>
+      <td>${roleCell}</td>
+      <td>${sessionsCell}</td>
+    </tr>`;
+  }).join("");
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ============================== EXPORT ============================== */
+function exportCsv() {
+  const f = getFilterValues();
+  const rows = ENROLLMENTS.filter(r => passesAllFilters(r, f));
+  const header = ["Patient Name", "Phone Number", "Plan Name", "Condition", "Coach Name", "Coach Type", "Plan Duration", "Plan Expiring Month", "Plan Expiry Date", "Total Sessions Completed"];
+  const lines = [header.join(",")];
+  rows.forEach(r => {
+    const line = [
+      r.name, r.phone, r.planNameDisplay, r.condition,
+      r.coachDisplay + (r.fallback ? " (booked, not completed)" : ""),
+      r.roleDisplay, r.durationLabel,
+      r.expiryMonthKey && r.expiryMonthKey !== "UNSPEC" ? monthLabel(r.expiryMonthKey) : "",
+      fmtDate(r.endDate),
+      r.sessionsCompleted
+    ].map(v => `"${String(v ?? "").replace(/"/g, '""')}"`);
+    lines.push(line.join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `coach-engagement-export-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ============================== EVENTS ============================== */
+document.getElementById("filter-month").addEventListener("change", () => { populateFilters(false); render(); });
+document.getElementById("filter-coach").addEventListener("change", () => { populateFilters(false); render(); });
+document.getElementById("filter-plan").addEventListener("change", () => { render(); });
+document.getElementById("filter-search").addEventListener("input", () => { render(); });
+document.getElementById("btn-clear-filters").addEventListener("click", () => {
+  document.getElementById("filter-search").value = "";
+  populateFilters(true);
+  render();
+});
+document.getElementById("btn-refresh").addEventListener("click", loadFromLive);
+document.getElementById("btn-export").addEventListener("click", exportCsv);
+
+document.querySelectorAll("thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortState.key === key) sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+    else { sortState.key = key; sortState.dir = "asc"; }
+    render();
+  });
+});
+
+document.getElementById("btn-source").addEventListener("click", () => {
+  const { patient, session } = getSourceUrls();
+  const newPatient = prompt("Published CSV URL for Patient data sheet:", patient);
+  if (newPatient === null) return;
+  const newSession = prompt("Published CSV URL for Session data sheet:", session);
+  if (newSession === null) return;
+  localStorage.setItem("patientCsvUrl", newPatient.trim());
+  localStorage.setItem("sessionCsvUrl", newSession.trim());
+  loadFromLive();
+});
+
+document.getElementById("btn-process-upload").addEventListener("click", () => {
+  const pFile = document.getElementById("file-patient").files[0];
+  const sFile = document.getElementById("file-session").files[0];
+  if (!pFile || !sFile) { alert("Please choose both files."); return; }
+  Promise.all([pFile.text(), sFile.text()]).then(([pText, sText]) => {
+    const patientRows = parseCsvText(pText);
+    const sessionRows = parseCsvText(sText);
+    ENROLLMENTS = processData(patientRows, sessionRows);
+    onDataReady();
+  });
+});
+
+/* ============================== INIT ============================== */
+loadFromLive();
+</script>
+</body>
+</html>
