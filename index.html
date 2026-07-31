@@ -117,9 +117,8 @@
     align-items: flex-end;
     margin-bottom: 18px;
   }
-  .filter-group { display: flex; flex-direction: column; gap: 5px; min-width: 190px; }
+  .filter-group { display: flex; flex-direction: column; gap: 5px; min-width: 190px; position: relative; }
   .filter-group label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray-600); }
-  .filter-group .hint { font-size: 10.5px; color: var(--gray-400); margin: -3px 0 1px; }
   select, input[type="text"], input[type="file"] {
     font: inherit;
     padding: 8px 10px;
@@ -129,10 +128,74 @@
     background: white;
     color: var(--gray-800);
   }
-  select[multiple] { min-height: 90px; }
-  select[multiple] option:checked { background: var(--accent-light); color: var(--navy); font-weight: 600; }
   select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .filter-group.grow { flex: 1; min-width: 220px; }
+
+  /* Checkbox dropdown multi-select ("Excel-style" filter) */
+  .multiselect { position: relative; }
+  .multiselect-toggle {
+    width: 100%;
+    text-align: left;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--gray-800);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .multiselect-toggle span.arrow { color: var(--gray-400); font-size: 10px; transition: transform .15s ease; }
+  .multiselect.open .multiselect-toggle span.arrow { transform: rotate(180deg); }
+  .multiselect-toggle:hover { border-color: var(--accent); }
+  .multiselect-panel {
+    display: none;
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 240px;
+    max-width: 320px;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(15,37,66,0.18);
+    padding: 8px;
+  }
+  .multiselect.open .multiselect-panel { display: block; }
+  .multiselect-actions {
+    display: flex;
+    gap: 14px;
+    padding: 2px 4px 8px;
+    border-bottom: 1px solid var(--gray-100);
+    margin-bottom: 6px;
+  }
+  .multiselect-actions button {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .multiselect-options { max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+  .multiselect-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 6px;
+    border-radius: 5px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .multiselect-option:hover { background: var(--gray-50); }
+  .multiselect-option input { cursor: pointer; }
+  .multiselect-empty { font-size: 12px; color: var(--gray-400); padding: 8px 4px; font-style: italic; }
   .clear-link {
     font-size: 12px;
     color: var(--accent);
@@ -220,26 +283,20 @@
   <div class="summary-cards" id="summary-cards"></div>
 
   <div class="filter-bar">
-    <div class="filter-group">
+    <div class="filter-group" id="filter-group-month">
       <label>Expiry month</label>
-      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
-      <select id="filter-month" multiple size="4"></select>
     </div>
-    <div class="filter-group">
+    <div class="filter-group" id="filter-group-coach">
       <label>Coach</label>
-      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
-      <select id="filter-coach" multiple size="4"></select>
     </div>
-    <div class="filter-group">
+    <div class="filter-group" id="filter-group-plan">
       <label>Plan</label>
-      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
-      <select id="filter-plan" multiple size="4"></select>
     </div>
     <div class="filter-group grow">
       <label>Search (name or phone)</label>
       <input type="text" id="filter-search" placeholder="Type to filter…" />
     </div>
-    <button class="clear-link" id="btn-clear-filters">Clear all filters</button>
+    <button class="clear-link" id="btn-clear-filters">Reset all filters</button>
   </div>
 
   <div class="table-wrap">
@@ -582,30 +639,137 @@ function onDataReady() {
 }
 
 /* ============================== FILTERS ============================== */
-// Multi-select: an empty array means "no filter applied / show all" for that field.
-function getSelectedValues(id) {
-  return [...document.getElementById(id).selectedOptions].map(o => o.value);
+// Checkbox-dropdown multi-select ("Excel-style" filter): closed until clicked,
+// options render as checkboxes, includes Select all / Clear all, click outside closes it.
+// FILTER_STATE holds the currently CHECKED values per category. A value being checked
+// means rows with that value pass; unchecking everything shows zero rows for that filter,
+// same convention as a spreadsheet AutoFilter.
+const FILTER_STATE = { month: new Set(), coach: new Set(), plan: new Set() };
+// Tracks which option values we've ever shown per category, so that when cascading
+// reveals a brand-new value we default it to "checked" instead of silently hiding it,
+// while still respecting a value the user deliberately unchecked earlier.
+const SEEN_OPTIONS = { month: new Set(), coach: new Set(), plan: new Set() };
+const FILTER_NOUN = { month: "months", coach: "coaches", plan: "plans" };
+const NO_COACH_LABEL = "(No coach found)";
+
+function coachesForRow(row) {
+  return row.coachDisplay
+    ? row.coachDisplay.split(",").map(c => c.trim())
+    : [NO_COACH_LABEL];
+}
+
+function buildMultiSelectShell(key, containerId) {
+  const container = document.getElementById(containerId);
+  const wrap = document.createElement("div");
+  wrap.className = "multiselect";
+  wrap.dataset.key = key;
+  wrap.innerHTML = `
+    <button type="button" class="multiselect-toggle"><span class="label">All ${FILTER_NOUN[key]}</span><span class="arrow">▾</span></button>
+    <div class="multiselect-panel">
+      <div class="multiselect-actions">
+        <button type="button" data-action="all">Select all</button>
+        <button type="button" data-action="none">Clear all</button>
+      </div>
+      <div class="multiselect-options"></div>
+    </div>
+  `;
+  container.appendChild(wrap);
+
+  wrap.querySelector(".multiselect-toggle").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = wrap.classList.contains("open");
+    document.querySelectorAll(".multiselect.open").forEach(el => el.classList.remove("open"));
+    if (!isOpen) wrap.classList.add("open");
+  });
+  wrap.querySelector('[data-action="all"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    const boxes = [...wrap.querySelectorAll(".multiselect-options input")];
+    boxes.forEach(b => { b.checked = true; });
+    FILTER_STATE[key] = new Set(boxes.map(b => b.value));
+    onFilterChanged(key);
+  });
+  wrap.querySelector('[data-action="none"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    wrap.querySelectorAll(".multiselect-options input").forEach(b => { b.checked = false; });
+    FILTER_STATE[key] = new Set();
+    onFilterChanged(key);
+  });
+}
+
+// Closes any open dropdown when clicking anywhere outside it.
+document.addEventListener("click", () => {
+  document.querySelectorAll(".multiselect.open").forEach(el => el.classList.remove("open"));
+});
+
+function renderMultiSelectOptions(key, values, labelFn) {
+  const wrap = document.querySelector(`.multiselect[data-key="${key}"]`);
+  const optionsEl = wrap.querySelector(".multiselect-options");
+  const checked = FILTER_STATE[key];
+
+  if (values.length === 0) {
+    optionsEl.innerHTML = `<div class="multiselect-empty">No options available</div>`;
+  } else {
+    optionsEl.innerHTML = values.map(v => `
+      <label class="multiselect-option">
+        <input type="checkbox" value="${escapeHtml(v)}" ${checked.has(v) ? "checked" : ""} />
+        <span>${escapeHtml(labelFn(v))}</span>
+      </label>
+    `).join("");
+    optionsEl.querySelectorAll("input").forEach(input => {
+      input.addEventListener("change", () => {
+        if (input.checked) FILTER_STATE[key].add(input.value);
+        else FILTER_STATE[key].delete(input.value);
+        onFilterChanged(key);
+      });
+    });
+  }
+  updateToggleLabel(key, values);
+}
+
+function updateToggleLabel(key, values) {
+  const wrap = document.querySelector(`.multiselect[data-key="${key}"]`);
+  const labelEl = wrap.querySelector(".multiselect-toggle .label");
+  const checked = FILTER_STATE[key];
+  const total = values.length;
+  const n = checked.size;
+  if (total === 0) labelEl.textContent = `No ${FILTER_NOUN[key]} available`;
+  else if (n === 0) labelEl.textContent = `None selected`;
+  else if (n === total) labelEl.textContent = `All ${FILTER_NOUN[key]}`;
+  else if (n === 1) labelEl.textContent = [...checked][0];
+  else labelEl.textContent = `${n} ${FILTER_NOUN[key]} selected`;
+}
+
+// Keeps values the user unchecked as unchecked, but auto-checks any value that's
+// newly appeared in the option list (so cascading never silently hides new data).
+function reconcileFilterState(key, availableValues) {
+  const seenBefore = SEEN_OPTIONS[key];
+  const prevChecked = FILTER_STATE[key];
+  const next = new Set();
+  availableValues.forEach(v => {
+    if (!seenBefore.has(v) || prevChecked.has(v)) next.add(v);
+  });
+  FILTER_STATE[key] = next;
+  SEEN_OPTIONS[key] = new Set(availableValues);
 }
 
 function getFilterValues() {
   return {
-    month: getSelectedValues("filter-month"),
-    coach: getSelectedValues("filter-coach"),
-    plan: getSelectedValues("filter-plan"),
+    month: FILTER_STATE.month,
+    coach: FILTER_STATE.coach,
+    plan: FILTER_STATE.plan,
     search: document.getElementById("filter-search").value.trim().toLowerCase(),
   };
 }
 
 function matchesUpTo(row, stage, f) {
-  // stage: 'month' | 'coach' | 'plan' — used to build cascading options
-  if (f.month.length > 0 && !f.month.includes(row.expiryMonthKey)) return false;
+  // stage: 'month' | 'coach' | 'plan' — used to build cascading options.
+  // f.<category>.size === 0 legitimately means "nothing checked -> show nothing"
+  // (matches spreadsheet AutoFilter behaviour), not "no filter applied".
+  if (!f.month.has(row.expiryMonthKey)) return false;
   if (stage === "month") return true;
-  if (f.coach.length > 0) {
-    const coaches = (row.coachDisplay || "").split(",").map(c => c.trim());
-    if (!f.coach.some(sel => coaches.includes(sel))) return false;
-  }
+  if (!coachesForRow(row).some(c => f.coach.has(c))) return false;
   if (stage === "coach") return true;
-  if (f.plan.length > 0 && !f.plan.includes(row.planNameDisplay)) return false;
+  if (!f.plan.has(row.planNameDisplay)) return false;
   return true;
 }
 
@@ -618,18 +782,53 @@ function passesAllFilters(row, f) {
   return true;
 }
 
-// Rebuilds a <select multiple>'s options while re-selecting whichever of the
-// previously-selected values are still valid (so cascading doesn't wipe your picks).
-function rebuildMultiSelect(id, optionValues, optionLabelFn, previouslySelected) {
-  const sel = document.getElementById(id);
-  sel.innerHTML = optionValues.map(v => `<option value="${v}">${optionLabelFn(v)}</option>`).join("");
-  [...sel.options].forEach(o => { o.selected = previouslySelected.includes(o.value); });
+function onFilterChanged(changedKey) {
+  if (changedKey === "month") {
+    recomputeCoachOptions();
+    recomputePlanOptions();
+  } else if (changedKey === "coach") {
+    recomputePlanOptions();
+  }
+  render();
+}
+
+function recomputeCoachOptions() {
+  const f = getFilterValues();
+  const coachSet = new Set();
+  ENROLLMENTS.forEach(r => {
+    if (!matchesUpTo(r, "month", f)) return;
+    coachesForRow(r).forEach(c => coachSet.add(c));
+  });
+  // Keep the "(No coach found)" option last rather than sorted alphabetically in the middle.
+  const sorted = [...coachSet].filter(c => c !== NO_COACH_LABEL).sort();
+  if (coachSet.has(NO_COACH_LABEL)) sorted.push(NO_COACH_LABEL);
+  reconcileFilterState("coach", sorted);
+  renderMultiSelectOptions("coach", sorted, c => c);
+}
+
+function recomputePlanOptions() {
+  const f = getFilterValues();
+  const planSet = new Set();
+  ENROLLMENTS.forEach(r => {
+    if (!matchesUpTo(r, "coach", f)) return;
+    if (r.planNameDisplay) planSet.add(r.planNameDisplay);
+  });
+  const sorted = [...planSet].sort();
+  reconcileFilterState("plan", sorted);
+  renderMultiSelectOptions("plan", sorted, p => p);
 }
 
 function populateFilters(resetToDefault) {
-  const prev = getFilterValues();
+  if (resetToDefault) {
+    FILTER_STATE.month = new Set();
+    FILTER_STATE.coach = new Set();
+    FILTER_STATE.plan = new Set();
+    SEEN_OPTIONS.month = new Set();
+    SEEN_OPTIONS.coach = new Set();
+    SEEN_OPTIONS.plan = new Set();
+  }
 
-  // Month options: from all data, chronological
+  // Month options: from all data, chronological. Defaults to fully checked (all shown).
   const monthKeys = new Set(ENROLLMENTS.map(r => r.expiryMonthKey).filter(Boolean));
   const sortedMonths = [...monthKeys].filter(k => k !== "UNSPEC").sort();
   if (monthKeys.has("UNSPEC")) sortedMonths.push("UNSPEC");
@@ -642,28 +841,11 @@ function populateFilters(resetToDefault) {
     if (k === nextKey) label += " (next)";
     return label;
   };
-  const monthSelection = resetToDefault ? (monthKeys.has(nowKey) ? [nowKey] : []) : prev.month;
-  rebuildMultiSelect("filter-month", sortedMonths, monthLabelFn, monthSelection);
+  reconcileFilterState("month", sortedMonths);
+  renderMultiSelectOptions("month", sortedMonths, monthLabelFn);
 
-  const f2 = getFilterValues();
-  // Coach options: cascaded on month only
-  const coachSet = new Set();
-  ENROLLMENTS.forEach(r => {
-    if (!matchesUpTo(r, "month", f2)) return;
-    (r.coachDisplay || "").split(",").map(c => c.trim()).filter(Boolean).forEach(c => coachSet.add(c));
-  });
-  const sortedCoaches = [...coachSet].sort();
-  rebuildMultiSelect("filter-coach", sortedCoaches, c => c, resetToDefault ? [] : prev.coach);
-
-  const f3 = getFilterValues();
-  // Plan options: cascaded on month + coach
-  const planSet = new Set();
-  ENROLLMENTS.forEach(r => {
-    if (!matchesUpTo(r, "coach", f3)) return;
-    if (r.planNameDisplay) planSet.add(r.planNameDisplay);
-  });
-  const sortedPlans = [...planSet].sort();
-  rebuildMultiSelect("filter-plan", sortedPlans, p => p, resetToDefault ? [] : prev.plan);
+  recomputeCoachOptions();
+  recomputePlanOptions();
 }
 
 /* ============================== RENDER ============================== */
@@ -767,9 +949,10 @@ function exportCsv() {
 }
 
 /* ============================== EVENTS ============================== */
-document.getElementById("filter-month").addEventListener("change", () => { populateFilters(false); render(); });
-document.getElementById("filter-coach").addEventListener("change", () => { populateFilters(false); render(); });
-document.getElementById("filter-plan").addEventListener("change", () => { render(); });
+buildMultiSelectShell("month", "filter-group-month");
+buildMultiSelectShell("coach", "filter-group-coach");
+buildMultiSelectShell("plan", "filter-group-plan");
+
 document.getElementById("filter-search").addEventListener("input", () => { render(); });
 document.getElementById("btn-clear-filters").addEventListener("click", () => {
   document.getElementById("filter-search").value = "";
