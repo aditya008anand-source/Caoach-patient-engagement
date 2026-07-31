@@ -119,6 +119,7 @@
   }
   .filter-group { display: flex; flex-direction: column; gap: 5px; min-width: 190px; }
   .filter-group label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray-600); }
+  .filter-group .hint { font-size: 10.5px; color: var(--gray-400); margin: -3px 0 1px; }
   select, input[type="text"], input[type="file"] {
     font: inherit;
     padding: 8px 10px;
@@ -128,6 +129,8 @@
     background: white;
     color: var(--gray-800);
   }
+  select[multiple] { min-height: 90px; }
+  select[multiple] option:checked { background: var(--accent-light); color: var(--navy); font-weight: 600; }
   select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .filter-group.grow { flex: 1; min-width: 220px; }
   .clear-link {
@@ -219,15 +222,18 @@
   <div class="filter-bar">
     <div class="filter-group">
       <label>Expiry month</label>
-      <select id="filter-month"></select>
+      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
+      <select id="filter-month" multiple size="4"></select>
     </div>
     <div class="filter-group">
       <label>Coach</label>
-      <select id="filter-coach"></select>
+      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
+      <select id="filter-coach" multiple size="4"></select>
     </div>
     <div class="filter-group">
       <label>Plan</label>
-      <select id="filter-plan"></select>
+      <div class="hint">Ctrl/Cmd+click to select or remove multiple</div>
+      <select id="filter-plan" multiple size="4"></select>
     </div>
     <div class="filter-group grow">
       <label>Search (name or phone)</label>
@@ -478,7 +484,25 @@ function processData(patientRows, sessionRows) {
         const counts = new Map();
         completed.forEach(s => counts.set(s.coach, (counts.get(s.coach) || 0) + 1));
         const max = Math.max(...counts.values());
-        const topCoaches = [...counts.entries()].filter(([, c]) => c === max).map(([c]) => c);
+        let topCoaches = [...counts.entries()].filter(([, c]) => c === max).map(([c]) => c);
+
+        // Tie-break: if multiple coaches tie for most completed sessions, prefer
+        // the dietician (Nutritionist) over other roles. If no dietician is in the
+        // tied group (e.g. Physiotherapist vs Psychologist), prefer Physiotherapist.
+        if (topCoaches.length > 1) {
+          const dieticians = topCoaches.filter(c =>
+            completed.some(s => s.coach === c && s.role === "Nutritionist")
+          );
+          if (dieticians.length > 0) {
+            topCoaches = dieticians;
+          } else {
+            const physios = topCoaches.filter(c =>
+              completed.some(s => s.coach === c && s.role === "Physiotherapist")
+            );
+            if (physios.length > 0) topCoaches = physios;
+          }
+        }
+
         const rolesUsed = new Set(completed.filter(s => topCoaches.includes(s.coach)).map(s => s.role));
         row.coachDisplay = topCoaches.join(", ");
         row.roleDisplay = [...rolesUsed].join(", ");
@@ -558,25 +582,30 @@ function onDataReady() {
 }
 
 /* ============================== FILTERS ============================== */
+// Multi-select: an empty array means "no filter applied / show all" for that field.
+function getSelectedValues(id) {
+  return [...document.getElementById(id).selectedOptions].map(o => o.value);
+}
+
 function getFilterValues() {
   return {
-    month: document.getElementById("filter-month").value,
-    coach: document.getElementById("filter-coach").value,
-    plan: document.getElementById("filter-plan").value,
+    month: getSelectedValues("filter-month"),
+    coach: getSelectedValues("filter-coach"),
+    plan: getSelectedValues("filter-plan"),
     search: document.getElementById("filter-search").value.trim().toLowerCase(),
   };
 }
 
 function matchesUpTo(row, stage, f) {
   // stage: 'month' | 'coach' | 'plan' — used to build cascading options
-  if (f.month && f.month !== "ALL" && row.expiryMonthKey !== f.month) return false;
+  if (f.month.length > 0 && !f.month.includes(row.expiryMonthKey)) return false;
   if (stage === "month") return true;
-  if (f.coach && f.coach !== "ALL") {
+  if (f.coach.length > 0) {
     const coaches = (row.coachDisplay || "").split(",").map(c => c.trim());
-    if (!coaches.includes(f.coach)) return false;
+    if (!f.coach.some(sel => coaches.includes(sel))) return false;
   }
   if (stage === "coach") return true;
-  if (f.plan && f.plan !== "ALL" && row.planNameDisplay !== f.plan) return false;
+  if (f.plan.length > 0 && !f.plan.includes(row.planNameDisplay)) return false;
   return true;
 }
 
@@ -589,42 +618,42 @@ function passesAllFilters(row, f) {
   return true;
 }
 
-function populateFilters(resetToDefault) {
-  const f = getFilterValues();
+// Rebuilds a <select multiple>'s options while re-selecting whichever of the
+// previously-selected values are still valid (so cascading doesn't wipe your picks).
+function rebuildMultiSelect(id, optionValues, optionLabelFn, previouslySelected) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = optionValues.map(v => `<option value="${v}">${optionLabelFn(v)}</option>`).join("");
+  [...sel.options].forEach(o => { o.selected = previouslySelected.includes(o.value); });
+}
 
-  // Month options: from all data, chronological, current month first select
+function populateFilters(resetToDefault) {
+  const prev = getFilterValues();
+
+  // Month options: from all data, chronological
   const monthKeys = new Set(ENROLLMENTS.map(r => r.expiryMonthKey).filter(Boolean));
   const sortedMonths = [...monthKeys].filter(k => k !== "UNSPEC").sort();
   if (monthKeys.has("UNSPEC")) sortedMonths.push("UNSPEC");
 
   const nowKey = monthKey(new Date());
   const nextKey = monthKey(addMonthsUTC(new Date(), 1));
-
-  const monthSel = document.getElementById("filter-month");
-  const prevMonthVal = monthSel.value;
-  monthSel.innerHTML = `<option value="ALL">All months</option>` + sortedMonths.map(k => {
+  const monthLabelFn = k => {
     let label = monthLabel(k);
     if (k === nowKey) label += " (current)";
     if (k === nextKey) label += " (next)";
-    return `<option value="${k}">${label}</option>`;
-  }).join("");
-  if (resetToDefault) {
-    monthSel.value = monthKeys.has(nowKey) ? nowKey : "ALL";
-  } else if ([...monthSel.options].some(o => o.value === prevMonthVal)) {
-    monthSel.value = prevMonthVal;
-  }
+    return label;
+  };
+  const monthSelection = resetToDefault ? (monthKeys.has(nowKey) ? [nowKey] : []) : prev.month;
+  rebuildMultiSelect("filter-month", sortedMonths, monthLabelFn, monthSelection);
 
   const f2 = getFilterValues();
-  // Coach options: cascaded on month
+  // Coach options: cascaded on month only
   const coachSet = new Set();
   ENROLLMENTS.forEach(r => {
     if (!matchesUpTo(r, "month", f2)) return;
     (r.coachDisplay || "").split(",").map(c => c.trim()).filter(Boolean).forEach(c => coachSet.add(c));
   });
-  const coachSel = document.getElementById("filter-coach");
-  const prevCoachVal = coachSel.value;
-  coachSel.innerHTML = `<option value="ALL">All coaches</option>` + [...coachSet].sort().map(c => `<option value="${c}">${c}</option>`).join("");
-  coachSel.value = [...coachSel.options].some(o => o.value === prevCoachVal) ? prevCoachVal : "ALL";
+  const sortedCoaches = [...coachSet].sort();
+  rebuildMultiSelect("filter-coach", sortedCoaches, c => c, resetToDefault ? [] : prev.coach);
 
   const f3 = getFilterValues();
   // Plan options: cascaded on month + coach
@@ -633,10 +662,8 @@ function populateFilters(resetToDefault) {
     if (!matchesUpTo(r, "coach", f3)) return;
     if (r.planNameDisplay) planSet.add(r.planNameDisplay);
   });
-  const planSel = document.getElementById("filter-plan");
-  const prevPlanVal = planSel.value;
-  planSel.innerHTML = `<option value="ALL">All plans</option>` + [...planSet].sort().map(p => `<option value="${p}">${p}</option>`).join("");
-  planSel.value = [...planSel.options].some(o => o.value === prevPlanVal) ? prevPlanVal : "ALL";
+  const sortedPlans = [...planSet].sort();
+  rebuildMultiSelect("filter-plan", sortedPlans, p => p, resetToDefault ? [] : prev.plan);
 }
 
 /* ============================== RENDER ============================== */
